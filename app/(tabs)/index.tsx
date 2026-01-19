@@ -5,8 +5,10 @@ import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useTrips } from '@/context/trips-context';
 
 export default function HomeScreen() {
+  const { addTrip } = useTrips();
   const [destination, setDestination] = useState('');
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [endDate, setEndDate] = useState<Date | undefined>(undefined);
@@ -122,14 +124,13 @@ export default function HomeScreen() {
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
-    router.push({
-      pathname: '/my-trips',
-      params: {
-        destination: destination.trim(),
-        startDate: startDate ? startDate.toISOString() : '',
-        endDate: endDate ? endDate.toISOString() : '',
-      },
+    addTrip({
+      destination: destination.trim(),
+      startDate: startDate ? startDate.toISOString() : '',
+      endDate: endDate ? endDate.toISOString() : '',
     });
+
+    router.push('/my-trips');
   };
 
   return (

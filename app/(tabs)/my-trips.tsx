@@ -1,16 +1,14 @@
-import { useLocalSearchParams } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { type Trip, useTrips } from '@/context/trips-context';
 
 export default function MyTripsScreen() {
-  const { destination, startDate, endDate } = useLocalSearchParams<{
-    destination?: string;
-    startDate?: string;
-    endDate?: string;
-  }>();
+  const router = useRouter();
+  const { trips } = useTrips();
 
   const formatParamDate = (value?: string) => {
     if (!value) return '';
@@ -19,7 +17,17 @@ export default function MyTripsScreen() {
     return d.toLocaleDateString();
   };
 
-  const hasTripData = destination && startDate && endDate;
+  const handleTripPress = (trip: Trip) => {
+    router.push({
+      pathname: '/trip/[id]',
+      params: {
+        id: trip.id,
+        destination: trip.destination,
+        startDate: trip.startDate,
+        endDate: trip.endDate,
+      },
+    });
+  };
 
   return (
     <ThemedView style={styles.container}>
@@ -27,13 +35,15 @@ export default function MyTripsScreen() {
         <ThemedText type="title">My Trips</ThemedText>
       </ThemedView>
 
-      {hasTripData ? (
-        <Pressable style={styles.tripCard}>
-          <ThemedText style={styles.tripDestination}>{destination}</ThemedText>
-          <ThemedText style={styles.tripDates}>
-            {formatParamDate(startDate)} - {formatParamDate(endDate)}
-          </ThemedText>
-        </Pressable>
+      {trips.length > 0 ? (
+        trips.map((trip) => (
+          <Pressable key={trip.id} style={styles.tripCard} onPress={() => handleTripPress(trip)}>
+            <ThemedText style={styles.tripDestination}>{trip.destination}</ThemedText>
+            <ThemedText style={styles.tripDates}>
+              {formatParamDate(trip.startDate)} - {formatParamDate(trip.endDate)}
+            </ThemedText>
+          </Pressable>
+        ))
       ) : (
         <ThemedText style={styles.placeholder}>Your saved trips will appear here.</ThemedText>
       )}
