@@ -1,8 +1,10 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import React, { useEffect } from 'react';
 import 'react-native-reanimated';
 
+import { AuthProvider, useAuth } from '@/context/auth-context';
 import { TripsProvider } from '@/context/trips-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -15,15 +17,42 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <TripsProvider>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="explore" options={{ title: 'Explore' }} />
-          <Stack.Screen name="trip/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-        </Stack>
-        <StatusBar style="auto" />
-      </TripsProvider>
+      <AuthProvider>
+        <RootLayoutGate>
+          <Stack>
+            <Stack.Screen name="auth" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="explore" options={{ title: 'Explore' }} />
+            <Stack.Screen name="trip/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+          </Stack>
+          <StatusBar style="auto" />
+        </RootLayoutGate>
+      </AuthProvider>
     </ThemeProvider>
   );
+}
+
+function RootLayoutGate({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const segments = useSegments();
+  const { phoneNumber, isLoading } = useAuth();
+
+  useEffect(() => {
+    if (isLoading) return;
+    const inAuth = segments[0] === 'auth';
+
+    if (!phoneNumber && !inAuth) {
+      router.replace('/auth');
+      return;
+    }
+
+    if (phoneNumber && inAuth) {
+      router.replace('/(tabs)');
+    }
+  }, [isLoading, phoneNumber, router, segments]);
+
+  if (isLoading) return null;
+
+  return <TripsProvider userKey={phoneNumber}>{children}</TripsProvider>;
 }

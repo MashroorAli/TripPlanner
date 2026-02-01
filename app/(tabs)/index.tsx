@@ -5,15 +5,20 @@ import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Colors } from '@/constants/theme';
 import { useTrips } from '@/context/trips-context';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function HomeScreen() {
   const { addTrip } = useTrips();
+  const theme = useColorScheme() ?? 'light';
+  const colors = Colors[theme];
   const [destination, setDestination] = useState('');
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [endDate, setEndDate] = useState<Date | undefined>(undefined);
   const [activePicker, setActivePicker] = useState<'start' | 'end' | null>(null);
   const [draftDate, setDraftDate] = useState<Date>(new Date());
+
   const [errors, setErrors] = useState<{ destination?: string; startDate?: string; endDate?: string }>({});
   const [showCityDropdown, setShowCityDropdown] = useState(false);
   const [cityQuery, setCityQuery] = useState('');
@@ -21,6 +26,7 @@ export default function HomeScreen() {
   const cities = [
     'Bangkok, Thailand',
     'Paris, France',
+    'Lisbon, Portugal',
     'London, United Kingdom',
     'Dubai, UAE',
     'Singapore',
@@ -46,7 +52,7 @@ export default function HomeScreen() {
     'Agra, India',
   ];
 
-  const filteredCities = useMemo(() => 
+  const filteredCities = useMemo(() =>
     cities.filter((city) =>
       city.toLowerCase().includes(cityQuery.toLowerCase())
     ), [cityQuery]
@@ -141,7 +147,11 @@ export default function HomeScreen() {
         <ThemedText style={styles.label}>Where are you going?</ThemedText>
         <View style={styles.typeaheadContainer}>
           <TextInput
-            style={[styles.input, errors.destination ? styles.inputError : undefined]}
+            style={[
+              styles.input,
+              { borderColor: colors.border, color: colors.inputText },
+              errors.destination ? styles.inputError : undefined,
+            ]}
             placeholder="Destination"
             placeholderTextColor="#888"
             value={cityQuery}
@@ -150,12 +160,12 @@ export default function HomeScreen() {
             onBlur={onDestinationBlur}
           />
           {!!showCityDropdown && filteredCities.length > 0 && (
-            <View style={styles.cityDropdown}>
+            <View style={[styles.cityDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <ScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled">
                 {filteredCities.map((city: string) => (
                   <Pressable
                     key={city}
-                    style={styles.cityOption}
+                    style={[styles.cityOption, { borderBottomColor: colors.surfaceMuted }]}
                     onPress={() => onCitySelect(city)}>
                     <ThemedText>{city}</ThemedText>
                   </Pressable>
@@ -174,8 +184,8 @@ export default function HomeScreen() {
             setDraftDate(clampToMinDate(initial));
             setActivePicker('start');
           }}
-          style={[styles.inputButton, errors.startDate ? styles.inputError : undefined]}>
-          <ThemedText style={styles.inputButtonText}>
+          style={[styles.inputButton, { borderColor: colors.border }, errors.startDate ? styles.inputError : undefined]}>
+          <ThemedText style={[styles.inputButtonText, { color: colors.inputText }]}>
             {startDate ? formatDate(startDate) : 'Start date'}
           </ThemedText>
         </Pressable>
@@ -187,14 +197,20 @@ export default function HomeScreen() {
             setDraftDate(clampToMinDate(initial));
             setActivePicker('end');
           }}
-          style={[styles.inputButton, errors.endDate ? styles.inputError : undefined]}>
-          <ThemedText style={styles.inputButtonText}>{endDate ? formatDate(endDate) : 'End date'}</ThemedText>
+          style={[styles.inputButton, { borderColor: colors.border }, errors.endDate ? styles.inputError : undefined]}>
+          <ThemedText style={[styles.inputButtonText, { color: colors.inputText }]}>
+            {endDate ? formatDate(endDate) : 'End date'}
+          </ThemedText>
         </Pressable>
         {!!errors.endDate && <ThemedText style={styles.errorText}>{errors.endDate}</ThemedText>}
 
         <Pressable
           onPress={onSubmit}
-          style={[styles.submitButton, !canSubmit ? styles.submitButtonDisabled : undefined]}>
+          style={[
+            styles.submitButton,
+            { backgroundColor: colors.primary },
+            !canSubmit ? styles.submitButtonDisabled : undefined,
+          ]}>
           <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
         </Pressable>
       </ThemedView>
@@ -205,11 +221,12 @@ export default function HomeScreen() {
         animationType="slide"
         onRequestClose={() => setActivePicker(null)}>
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <View style={styles.modalHeader}>
               <Pressable onPress={() => setActivePicker(null)} style={styles.modalButton}>
                 <ThemedText style={styles.modalButtonText}>Cancel</ThemedText>
               </Pressable>
+
               <ThemedText style={styles.modalTitle}>
                 {activePicker === 'start' ? 'Start date' : 'End date'}
               </ThemedText>

@@ -1,14 +1,20 @@
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Colors } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { type Trip, useTrips } from '@/context/trips-context';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function MyTripsScreen() {
   const router = useRouter();
   const { trips } = useTrips();
+  const { signOut } = useAuth();
+  const theme = useColorScheme() ?? 'light';
+  const colors = Colors[theme];
 
   const formatParamDate = (value?: string) => {
     if (!value) return '';
@@ -32,7 +38,16 @@ export default function MyTripsScreen() {
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.header}>
-        <ThemedText type="title">My Trips</ThemedText>
+        <View style={styles.headerRow}>
+          <ThemedText type="title">My Trips</ThemedText>
+          <Pressable
+            onPress={async () => {
+              await signOut();
+              router.replace('/auth');
+            }}>
+            <ThemedText style={[styles.signOutText, { color: colors.primary }]}>Sign out</ThemedText>
+          </Pressable>
+        </View>
       </ThemedView>
 
       {trips.length > 0 ? (
@@ -59,6 +74,15 @@ const styles = StyleSheet.create({
   },
   header: {
     marginTop: 40,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  signOutText: {
+    color: '#007AFF',
+    fontWeight: '600',
   },
   tripCard: {
     borderWidth: 1,

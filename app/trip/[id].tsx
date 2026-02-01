@@ -5,13 +5,17 @@ import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Colors } from '@/constants/theme';
 import { useTrips } from '@/context/trips-context';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TripDetailsScreen() {
   const { id } = useLocalSearchParams<{
     id?: string;
   }>();
   const router = useRouter();
+  const theme = useColorScheme() ?? 'light';
+  const colors = Colors[theme];
   const {
     trips,
     flightByTripId,
@@ -113,14 +117,15 @@ export default function TripDetailsScreen() {
     switch (activeTab) {
       case 'overview':
         const countdownBase = flight?.departureDate ?? trip?.startDate;
+        const daysUntilTrip = getDaysUntilTrip(countdownBase);
         return (
           <ThemedView style={styles.tabContent}>
             <ThemedText style={styles.sectionTitle}>Trip Overview</ThemedText>
             <ThemedText style={styles.countdownText}>
-              There are {getDaysUntilTrip(countdownBase)} days until the trip!
+              {daysUntilTrip === 1 ? 'You fly out tomorrow!' : `There are ${daysUntilTrip} days until the trip!`}
             </ThemedText>
 
-            <ThemedView style={styles.flightCard}>
+            <ThemedView style={[styles.flightCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
               <View style={styles.flightHeaderRow}>
                 <ThemedText style={styles.flightTitle}>Departing Flight</ThemedText>
               </View>
@@ -165,7 +170,7 @@ export default function TripDetailsScreen() {
 
             <Modal visible={flightModalVisible} transparent animationType="fade">
               <View style={styles.modalOverlay}>
-                <View style={styles.modalCard}>
+                <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
                   <ThemedText style={styles.modalTitle}>{flight ? 'Edit Flight' : 'Add Flight'}</ThemedText>
 
                   <TextInput
@@ -173,7 +178,7 @@ export default function TripDetailsScreen() {
                     onChangeText={setFlightDepartureDate}
                     placeholder="Departure date (YYYY-MM-DD)"
                     placeholderTextColor="#888"
-                    style={styles.modalInput}
+                    style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                   />
 
                   <TextInput
@@ -181,7 +186,7 @@ export default function TripDetailsScreen() {
                     onChangeText={setFlightDepartureTime}
                     placeholder="Departure time (HH:MM)"
                     placeholderTextColor="#888"
-                    style={styles.modalInput}
+                    style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                   />
 
                   <TextInput
@@ -189,7 +194,7 @@ export default function TripDetailsScreen() {
                     onChangeText={setFlightAirline}
                     placeholder="Airline (optional)"
                     placeholderTextColor="#888"
-                    style={styles.modalInput}
+                    style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                   />
 
                   <TextInput
@@ -197,7 +202,7 @@ export default function TripDetailsScreen() {
                     onChangeText={setFlightNumber}
                     placeholder="Flight number (optional)"
                     placeholderTextColor="#888"
-                    style={styles.modalInput}
+                    style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                   />
 
                   <TextInput
@@ -205,7 +210,7 @@ export default function TripDetailsScreen() {
                     onChangeText={setFlightFrom}
                     placeholder="From (optional)"
                     placeholderTextColor="#888"
-                    style={styles.modalInput}
+                    style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                   />
 
                   <TextInput
@@ -213,14 +218,14 @@ export default function TripDetailsScreen() {
                     onChangeText={setFlightTo}
                     placeholder="To (optional)"
                     placeholderTextColor="#888"
-                    style={styles.modalInput}
+                    style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                   />
 
                   {flightError ? <ThemedText style={styles.modalErrorText}>{flightError}</ThemedText> : null}
 
                   <View style={styles.modalActions}>
                     <Pressable
-                      style={styles.modalButton}
+                      style={[styles.modalButton, { borderColor: colors.border }]}
                       onPress={() => {
                         setFlightModalVisible(false);
                         setFlightError(null);
@@ -229,7 +234,11 @@ export default function TripDetailsScreen() {
                     </Pressable>
 
                     <Pressable
-                      style={[styles.modalButton, styles.modalPrimaryButton]}
+                      style={[
+                        styles.modalButton,
+                        styles.modalPrimaryButton,
+                        { backgroundColor: colors.primary, borderColor: colors.primary },
+                      ]}
                       onPress={() => {
                         if (!tripId) return;
                         const depDate = flightDepartureDate.trim();
@@ -271,14 +280,14 @@ export default function TripDetailsScreen() {
                     onPress={() => {
                       setSelectedDayId(null);
                     }}>
-                    <ThemedText style={styles.itineraryBackText}>← Days</ThemedText>
+                    <ThemedText style={[styles.itineraryBackText, { color: colors.primary }]}>← Days</ThemedText>
                   </Pressable>
                 </View>
 
                 <ThemedText style={styles.itineraryDayTitle}>{selectedDay.label}</ThemedText>
 
                 <Pressable
-                  style={styles.addEventButton}
+                  style={[styles.addEventButton, { borderColor: colors.border }]}
                   onPress={() => {
                     setEventName('');
                     setEventTime('');
@@ -287,7 +296,7 @@ export default function TripDetailsScreen() {
                     setEditingEventId(null);
                     setEventModalVisible(true);
                   }}>
-                  <ThemedText style={styles.addEventButtonText}>+ Add Event</ThemedText>
+                  <ThemedText style={[styles.addEventButtonText, { color: colors.primary }]}>+ Add Event</ThemedText>
                 </Pressable>
 
                 {selectedDay.events.length > 0 ? (
@@ -296,7 +305,9 @@ export default function TripDetailsScreen() {
                       .slice()
                       .sort((a, b) => a.time.localeCompare(b.time))
                       .map((e) => (
-                        <ThemedView key={e.id} style={styles.eventCard}>
+                        <ThemedView
+                          key={e.id}
+                          style={[styles.eventCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                           <View style={styles.eventHeaderRow}>
                             <ThemedText style={styles.eventName}>{e.name}</ThemedText>
 
@@ -312,7 +323,7 @@ export default function TripDetailsScreen() {
                                     setEventError(null);
                                     setEventModalVisible(true);
                                   }}>
-                                  <ThemedText style={styles.inlineActionText}>Edit</ThemedText>
+                                  <ThemedText style={[styles.inlineActionText, { color: colors.primary }]}>Edit</ThemedText>
                                 </Pressable>
 
                                 <Pressable
@@ -328,7 +339,11 @@ export default function TripDetailsScreen() {
                                       },
                                     ]);
                                   }}>
-                                  <ThemedText style={[styles.inlineActionText, styles.destructiveText]}>Delete</ThemedText>
+                                  <ThemedText
+                                    style={[styles.inlineActionText, styles.destructiveText, { color: colors.destructive }]}
+                                  >
+                                    Delete
+                                  </ThemedText>
                                 </Pressable>
                               </View>
                             ) : null}
@@ -344,7 +359,7 @@ export default function TripDetailsScreen() {
 
                 <Modal visible={eventModalVisible} transparent animationType="fade">
                   <View style={styles.modalOverlay}>
-                    <View style={styles.modalCard}>
+                    <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
                       <ThemedText style={styles.modalTitle}>{editingEventId ? 'Edit Event' : 'Add Event'}</ThemedText>
 
                       <TextInput
@@ -352,7 +367,7 @@ export default function TripDetailsScreen() {
                         onChangeText={setEventName}
                         placeholder="Name"
                         placeholderTextColor="#888"
-                        style={styles.modalInput}
+                        style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                       />
 
                       <TextInput
@@ -360,7 +375,7 @@ export default function TripDetailsScreen() {
                         onChangeText={setEventTime}
                         placeholder="Time (e.g., 9:00 AM)"
                         placeholderTextColor="#888"
-                        style={styles.modalInput}
+                        style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                       />
 
                       <TextInput
@@ -368,14 +383,14 @@ export default function TripDetailsScreen() {
                         onChangeText={setEventLocation}
                         placeholder="Location (optional)"
                         placeholderTextColor="#888"
-                        style={styles.modalInput}
+                        style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                       />
 
                       {eventError ? <ThemedText style={styles.modalErrorText}>{eventError}</ThemedText> : null}
 
                       <View style={styles.modalActions}>
                         <Pressable
-                          style={styles.modalButton}
+                          style={[styles.modalButton, { borderColor: colors.border }]}
                           onPress={() => {
                             setEventModalVisible(false);
                             setEventName('');
@@ -388,7 +403,11 @@ export default function TripDetailsScreen() {
                         </Pressable>
 
                         <Pressable
-                          style={[styles.modalButton, styles.modalPrimaryButton]}
+                          style={[
+                            styles.modalButton,
+                            styles.modalPrimaryButton,
+                            { backgroundColor: colors.primary, borderColor: colors.primary },
+                          ]}
                           onPress={() => {
                             if (!tripId || !selectedDayId) return;
                             const name = eventName.trim();
@@ -426,21 +445,9 @@ export default function TripDetailsScreen() {
               </ThemedView>
             ) : (
               <ThemedView style={styles.itineraryContainer}>
-                <View style={styles.daysHeaderRow}>
-                  <Pressable
-                    style={styles.addDayButton}
-                    onPress={() => {
-                      setEditingDayId(null);
-                      setDayName(`Day ${itineraryDays.length + 1}`);
-                      setDayModalVisible(true);
-                    }}>
-                    <ThemedText style={styles.addDayButtonText}>+ Add Day</ThemedText>
-                  </Pressable>
-                </View>
-
                 <Modal visible={dayModalVisible} transparent animationType="fade">
                   <View style={styles.modalOverlay}>
-                    <View style={styles.modalCard}>
+                    <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
                       <ThemedText style={styles.modalTitle}>{editingDayId ? 'Edit Day' : 'Add Day'}</ThemedText>
 
                       <TextInput
@@ -448,12 +455,12 @@ export default function TripDetailsScreen() {
                         onChangeText={setDayName}
                         placeholder="Day name"
                         placeholderTextColor="#888"
-                        style={styles.modalInput}
+                        style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
                       />
 
                       <View style={styles.modalActions}>
                         <Pressable
-                          style={styles.modalButton}
+                          style={[styles.modalButton, { borderColor: colors.border }]}
                           onPress={() => {
                             setDayModalVisible(false);
                             setDayName('');
@@ -463,7 +470,11 @@ export default function TripDetailsScreen() {
                         </Pressable>
 
                         <Pressable
-                          style={[styles.modalButton, styles.modalPrimaryButton]}
+                          style={[
+                            styles.modalButton,
+                            styles.modalPrimaryButton,
+                            { backgroundColor: colors.primary, borderColor: colors.primary },
+                          ]}
                           onPress={() => {
                             if (!tripId) return;
                             const label = dayName.trim();
@@ -493,7 +504,7 @@ export default function TripDetailsScreen() {
                   itineraryDays.map((day) => (
                     <Pressable
                       key={day.id}
-                      style={styles.dayCard}
+                      style={[styles.dayCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
                       onPress={() => {
                         if (!editMode) setSelectedDayId(day.id);
                       }}>
@@ -573,17 +584,17 @@ export default function TripDetailsScreen() {
       {/* Header with home button and trip info */}
       <ThemedView style={styles.header}>
         <Pressable style={styles.homeButton} onPress={() => router.back()}>
-          <ThemedText style={styles.homeButtonText}>← Home</ThemedText>
+          <ThemedText style={[styles.homeButtonText, { color: colors.primary }]}>← Home</ThemedText>
         </Pressable>
         <ThemedText style={styles.tripDestination}>Trip Details</ThemedText>
       </ThemedView>
 
       {/* Tabs */}
-      <ThemedView style={styles.tabsContainer}>
+      <ThemedView style={[styles.tabsContainer, { backgroundColor: colors.surfaceMuted }]}>
         {tabs.map((tab) => (
           <Pressable
             key={tab.key}
-            style={[styles.tab, activeTab === tab.key && styles.activeTab]}
+            style={[styles.tab, activeTab === tab.key ? { backgroundColor: colors.primary } : undefined]}
             onPress={() => setActiveTab(tab.key)}>
             <ThemedText
               numberOfLines={1}
@@ -596,11 +607,24 @@ export default function TripDetailsScreen() {
 
       <View style={styles.globalEditOverlay} pointerEvents="box-none">
         <Pressable
-          style={[styles.globalPencilButton, editMode && styles.globalPencilButtonActive]}
+          style={[styles.globalPlusButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          onPress={() => {
+            if (!tripId) return;
+            setSelectedDayId(null);
+            setEditingDayId(null);
+            setDayName(`Day ${itineraryDays.length + 1}`);
+            setDayModalVisible(true);
+            setActiveTab('itinerary');
+          }}>
+          <IconSymbol name="plus" size={22} color={colors.primary} />
+        </Pressable>
+
+        <Pressable
+          style={[styles.globalPencilButton, editMode ? { backgroundColor: colors.primary } : undefined]}
           onPress={() => {
             setEditMode((v) => !v);
           }}>
-          <IconSymbol name="pencil" size={18} color={editMode ? '#fff' : '#007AFF'} />
+          <IconSymbol name="pencil" size={22} color={editMode ? '#fff' : colors.primary} />
         </Pressable>
       </View>
 
@@ -654,14 +678,29 @@ const styles = StyleSheet.create({
   globalPencilButton: {
     position: 'absolute',
     right: 0,
-    top: -20,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    top: -6,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
     elevation: 10,
+  },
+  globalPlusButton: {
+    position: 'absolute',
+    right: 46,
+    top: -6,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    elevation: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
   },
   globalPencilButtonActive: {
     backgroundColor: '#007AFF',

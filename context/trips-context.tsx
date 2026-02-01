@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 export interface Trip {
   id: string;
@@ -51,10 +52,87 @@ interface TripsContextValue {
 
 const TripsContext = createContext<TripsContextValue | undefined>(undefined);
 
-export function TripsProvider({ children }: { children: React.ReactNode }) {
+const getTripsStorageKey = (userKey: string) => `tripplanner:data:${userKey}`;
+
+type PersistedTripsState = {
+  trips: Trip[];
+  flightByTripId: Record<string, FlightInfo | undefined>;
+  itineraryByTripId: Record<string, ItineraryDay[]>;
+};
+
+type TripsProviderProps = {
+  children: React.ReactNode;
+  userKey: string | null;
+};
+
+export function TripsProvider({ children, userKey }: TripsProviderProps) {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [flightByTripId, setFlightByTripId] = useState<Record<string, FlightInfo | undefined>>({});
   const [itineraryByTripId, setItineraryByTripId] = useState<Record<string, ItineraryDay[]>>({});
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrate = async () => {
+      if (!userKey) {
+        setTrips([]);
+        setFlightByTripId({});
+        setItineraryByTripId({});
+        setIsHydrated(true);
+        return;
+      }
+
+      setIsHydrated(false);
+      try {
+        const raw = await AsyncStorage.getItem(getTripsStorageKey(userKey));
+        if (cancelled) return;
+
+        if (!raw) {
+          setTrips([]);
+          setFlightByTripId({});
+          setItineraryByTripId({});
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as Partial<PersistedTripsState>;
+        setTrips(Array.isArray(parsed.trips) ? parsed.trips : []);
+        setFlightByTripId(parsed.flightByTripId && typeof parsed.flightByTripId === 'object' ? parsed.flightByTripId : {});
+        setItineraryByTripId(
+          parsed.itineraryByTripId && typeof parsed.itineraryByTripId === 'object' ? parsed.itineraryByTripId : {}
+        );
+      } catch {
+        if (cancelled) return;
+        setTrips([]);
+        setFlightByTripId({});
+        setItineraryByTripId({});
+      } finally {
+        if (!cancelled) setIsHydrated(true);
+      }
+    };
+
+    hydrate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userKey]);
+
+  useEffect(() => {
+    if (!userKey) return;
+    if (!isHydrated) return;
+
+    const persist = async () => {
+      const nextState: PersistedTripsState = {
+        trips,
+        flightByTripId,
+        itineraryByTripId,
+      };
+      await AsyncStorage.setItem(getTripsStorageKey(userKey), JSON.stringify(nextState));
+    };
+
+    persist();
+  }, [flightByTripId, itineraryByTripId, isHydrated, trips, userKey]);
 
   const value = useMemo<TripsContextValue>(() => {
     const addTrip: TripsContextValue['addTrip'] = (trip) => {
