@@ -9,8 +9,6 @@ import {
   Animated,
   Dimensions,
   Modal,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,7 +20,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
-import { useTrips } from '@/context/trips-context';
+import { type TripHousing, useTrips } from '@/context/trips-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 type CachedHeroImages = {
@@ -30,6 +28,12 @@ type CachedHeroImages = {
   urls: string[];
   lastIndex?: number;
 };
+
+type TripPerson = {
+  id: string;
+  name: string;
+};
+
 
 export default function TripDetailsScreen() {
   const { id } = useLocalSearchParams<{
@@ -59,6 +63,9 @@ export default function TripDetailsScreen() {
     addJournalEntry,
     updateJournalEntry,
     deleteJournalEntry,
+    housingByTripId,
+    addHousing,
+    deleteHousing,
   } = useTrips();
   const [activeTab, setActiveTab] = useState<'overview' | 'itinerary' | 'finances' | 'journal' | 'photos'>('overview');
 
@@ -126,6 +133,9 @@ export default function TripDetailsScreen() {
   const [heroNextUrl, setHeroNextUrl] = useState<string | null>(null);
   const heroNextOpacity = useRef(new Animated.Value(0)).current;
   const heroDisplayedUrlRef = useRef<string | null>(null);
+  const heroSwapInProgressRef = useRef(false);
+  const heroFocusRunIdRef = useRef(0);
+  const heroFetchInProgressRef = useRef(false);
 
   const shuffleUrls = (items: string[]) => {
     const copy = items.slice();
@@ -138,37 +148,142 @@ export default function TripDetailsScreen() {
     return copy;
   };
 
-  const scrollY = useRef(new Animated.Value(0)).current;
   const heroMaxHeight = Math.round(Dimensions.get('window').height / 3);
-  const heroMinHeight = 124;
-  const bottomElasticSpace = Math.max(180, heroMaxHeight - heroMinHeight + 24);
-  const heroHeight = scrollY.interpolate({
-    inputRange: [0, Math.max(0, heroMaxHeight - heroMinHeight)],
-    outputRange: [heroMaxHeight, heroMinHeight],
-    extrapolate: 'clamp',
-  });
   const [editingJournalEntryId, setEditingJournalEntryId] = useState<string | null>(null);
 
-  const scrollRef = useRef<ScrollView | null>(null);
-  const scrollLayoutHeightRef = useRef(0);
-  const scrollContentHeightRef = useRef(0);
-  const snappingRef = useRef(false);
+  const [overviewFlightsCollapsed, setOverviewFlightsCollapsed] = useState(false);
+  const [overviewHousingCollapsed, setOverviewHousingCollapsed] = useState(false);
+  const [overviewComingUpCollapsed, setOverviewComingUpCollapsed] = useState(false);
 
-  const snapBackIfNeeded = (offsetY: number) => {
-    if (snappingRef.current) return;
-    const layoutH = scrollLayoutHeightRef.current;
-    const contentH = scrollContentHeightRef.current;
-    if (!layoutH || !contentH) return;
+  const [tripPeople] = useState<TripPerson[]>([{ id: 'me', name: 'M' }]);
+  const tripHousing: TripHousing[] = tripId ? housingByTripId[tripId] ?? [] : [];
 
-    const maxOffset = Math.max(0, contentH - layoutH);
-    const snapOffset = Math.max(0, maxOffset - bottomElasticSpace);
-    if (offsetY <= snapOffset + 0.5) return;
+  const [housingModalVisible, setHousingModalVisible] = useState(false);
+  const [housingLocation, setHousingLocation] = useState('');
+  const [housingStartDate, setHousingStartDate] = useState<string | null>(null);
+  const [housingEndDate, setHousingEndDate] = useState<string | null>(null);
+  const [housingCheckIn, setHousingCheckIn] = useState('');
+  const [housingCheckOut, setHousingCheckOut] = useState('');
+  const [housingError, setHousingError] = useState<string | null>(null);
+  const [housingCalMonth, setHousingCalMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
 
-    snappingRef.current = true;
-    scrollRef.current?.scrollTo({ y: snapOffset, animated: true });
-    setTimeout(() => {
-      snappingRef.current = false;
-    }, 350);
+  const openInviteModal = () => {
+    Alert.alert('Invite', 'Invites will be added soon.', [{ text: 'OK' }]);
+  };
+
+  const openHousingModal = () => {
+    setHousingLocation('');
+    setHousingStartDate(null);
+    setHousingEndDate(null);
+    setHousingCheckIn('');
+    setHousingCheckOut('');
+    setHousingError(null);
+    const tripStart = trip?.startDate ? new Date(trip.startDate) : new Date();
+    setHousingCalMonth({ year: tripStart.getFullYear(), month: tripStart.getMonth() });
+    setHousingModalVisible(true);
+  };
+
+  const handleHousingCalDayPress = (dateStr: string) => {
+    if (!housingStartDate || housingEndDate) {
+      setHousingStartDate(dateStr);
+      setHousingEndDate(null);
+    } else {
+      if (dateStr < housingStartDate) {
+        setHousingStartDate(dateStr);
+        setHousingEndDate(housingStartDate);
+      } else {
+        setHousingEndDate(dateStr);
+      }
+    }
+  };
+
+  const buildCalendarDays = (year: number, month: number) => {
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells: (string | null)[] = [];
+    for (let i = 0; i < firstDay; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const mm = String(month + 1).padStart(2, '0');
+      const dd = String(d).padStart(2, '0');
+      cells.push(`${year}-${mm}-${dd}`);
+    }
+    return cells;
+  };
+
+  const isDateInRange = (dateStr: string) => {
+    if (!housingStartDate) return false;
+    if (dateStr === housingStartDate) return true;
+    if (!housingEndDate) return false;
+    return dateStr >= housingStartDate && dateStr <= housingEndDate;
+  };
+
+  const formatHousingDate = (dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const toggleSection = (setter: React.Dispatch<React.SetStateAction<boolean>>) => {
+    setter((v) => !v);
+  };
+
+  const getInitials = (name: string) => {
+    const cleaned = name.trim();
+    if (!cleaned) return '?';
+    const parts = cleaned.split(/\s+/).filter(Boolean);
+    const first = parts[0]?.[0] ?? '?';
+    const last = parts.length > 1 ? parts[parts.length - 1]?.[0] : '';
+    return (first + last).toUpperCase();
+  };
+
+  const getDayIndex = (label: string) => {
+    const m = label.match(/(\d+)/);
+    return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+  };
+
+  const parseEventTimeMinutes = (value: string) => {
+    const t = value.trim();
+    if (!t) return Number.POSITIVE_INFINITY;
+    const ampm = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    const t24 = t.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    let hours = 0;
+    let minutes = 0;
+    if (ampm) {
+      hours = Number(ampm[1]);
+      minutes = Number(ampm[2]);
+      const ap = ampm[3].toUpperCase();
+      if (ap === 'PM' && hours < 12) hours += 12;
+      if (ap === 'AM' && hours === 12) hours = 0;
+    } else if (t24) {
+      hours = Number(t24[1]);
+      minutes = Number(t24[2]);
+    } else {
+      return Number.POSITIVE_INFINITY;
+    }
+    return hours * 60 + minutes;
+  };
+
+  const getNextItineraryEvent = () => {
+    const events = itineraryDays
+      .flatMap((day) =>
+        (day.events ?? []).map((event) => ({
+          dayLabel: day.label,
+          dayIndex: getDayIndex(day.label),
+          timeMinutes: parseEventTimeMinutes(event.time),
+          event,
+        }))
+      )
+      .sort((a, b) => {
+        if (a.dayIndex !== b.dayIndex) return a.dayIndex - b.dayIndex;
+        if (a.timeMinutes !== b.timeMinutes) return a.timeMinutes - b.timeMinutes;
+        return a.event.name.localeCompare(b.event.name);
+      });
+
+    const first = events[0];
+    return first ? { dayLabel: first.dayLabel, event: first.event } : undefined;
   };
 
   const fetchHeroImagesForDestination = async (destination: string) => {
@@ -197,12 +312,15 @@ export default function TripDetailsScreen() {
   useFocusEffect(
     useCallback(() => {
       let canceled = false;
+      const runId = (heroFocusRunIdRef.current += 1);
 
       const run = async () => {
         const destination = trip?.destination?.trim();
         if (!destination) return;
 
-        if (heroNextUrl) return;
+        if (heroSwapInProgressRef.current) return;
+        if (heroFetchInProgressRef.current) return;
+        heroFetchInProgressRef.current = true;
 
         const cacheKey = `heroImages:${destination.toLowerCase()}`;
         const now = Date.now();
@@ -287,12 +405,14 @@ export default function TripDetailsScreen() {
             return;
           }
 
-          if (canceled) return;
-          if (!heroDisplayedUrl) {
+          if (canceled || heroFocusRunIdRef.current !== runId) return;
+          if (!heroDisplayedUrlRef.current) {
             heroDisplayedUrlRef.current = nextUrl;
+            heroSwapInProgressRef.current = false;
             setHeroDisplayedUrl(nextUrl);
           } else {
             heroNextOpacity.setValue(0);
+            heroSwapInProgressRef.current = true;
             setHeroNextUrl(nextUrl);
           }
 
@@ -323,12 +443,14 @@ export default function TripDetailsScreen() {
                 }
               }
 
-              if (!canceled && firstUrl) {
-                if (!heroDisplayedUrl) {
+              if (!canceled && heroFocusRunIdRef.current === runId && firstUrl) {
+                if (!heroDisplayedUrlRef.current) {
                   heroDisplayedUrlRef.current = firstUrl;
+                  heroSwapInProgressRef.current = false;
                   setHeroDisplayedUrl(firstUrl);
                 } else {
                   heroNextOpacity.setValue(0);
+                  heroSwapInProgressRef.current = true;
                   setHeroNextUrl(firstUrl);
                 }
               }
@@ -344,11 +466,14 @@ export default function TripDetailsScreen() {
         }
       };
 
-      run();
+      run().finally(() => {
+        if (heroFocusRunIdRef.current === runId) heroFetchInProgressRef.current = false;
+      });
       return () => {
         canceled = true;
+        if (heroFocusRunIdRef.current === runId) heroFetchInProgressRef.current = false;
       };
-    }, [heroCacheTtlMs, trip?.destination, PEXELS_API_KEY, heroNextUrl]),
+    }, [heroCacheTtlMs, trip?.destination, PEXELS_API_KEY]),
   );
 
   const getTodayIsoDate = () => new Date().toISOString().slice(0, 10);
@@ -722,6 +847,22 @@ export default function TripDetailsScreen() {
 
         const countdownBase = sortedFlights[0]?.departureDate ?? trip?.startDate;
         const daysUntilTrip = getDaysUntilTrip(countdownBase);
+        const nextEvent = getNextItineraryEvent();
+        const now = new Date();
+        const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const upcomingHousing = tripHousing
+          .filter((h) => h.endDate >= todayIso)
+          .sort((a, b) => a.startDate.localeCompare(b.startDate))[0];
+
+        let nextMajorTransport: (typeof sortedFlights)[number] | undefined;
+        for (const f of sortedFlights) {
+          const dt = parseFlightDateTime(f.departureDate, f.departureTime);
+          if (dt && dt.getTime() >= Date.now()) {
+            nextMajorTransport = f;
+            break;
+          }
+        }
+        if (!nextMajorTransport) nextMajorTransport = sortedFlights[0];
         return (
           <ThemedView style={styles.tabContent}>
             <ThemedText style={styles.sectionTitle}>Trip Overview</ThemedText>
@@ -730,18 +871,34 @@ export default function TripDetailsScreen() {
             </ThemedText>
 
             <ThemedView style={[styles.flightCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <View style={styles.flightHeaderRow}>
-                <ThemedText style={styles.flightTitle}>Flights</ThemedText>
-                <Pressable
-                  style={styles.flightAddIconButton}
-                  onPress={() => {
-                    openFlightModal();
-                  }}>
-                  <IconSymbol name="plus" size={18} color={colors.primary} />
-                </Pressable>
-              </View>
+              <Pressable style={styles.flightHeaderRow} onPress={() => toggleSection(setOverviewFlightsCollapsed)}>
+                <View style={styles.sectionHeaderLeft}>
+                  <IconSymbol
+                    name="chevron.right"
+                    size={18}
+                    color={colors.primary}
+                    style={[styles.sectionChevron, !overviewFlightsCollapsed ? styles.sectionChevronExpanded : null]}
+                  />
+                  <ThemedText style={styles.flightTitle}>Flights</ThemedText>
+                </View>
+                <View
+                  style={[
+                    styles.sectionHeaderActionSlot,
+                    overviewFlightsCollapsed ? styles.sectionHeaderActionHidden : null,
+                  ]}
+                  pointerEvents={overviewFlightsCollapsed ? 'none' : 'auto'}>
+                  <Pressable
+                    style={styles.flightAddIconButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      openFlightModal();
+                    }}>
+                    <IconSymbol name="plus" size={18} color={colors.primary} />
+                  </Pressable>
+                </View>
+              </Pressable>
 
-              {sortedFlights.length > 0 ? (
+              {overviewFlightsCollapsed ? null : sortedFlights.length > 0 ? (
                 <View style={styles.flightsList}>
                   {([
                     { key: 'going' as const, label: 'Going there' },
@@ -817,6 +974,306 @@ export default function TripDetailsScreen() {
                 </View>
               ) : (
                 <ThemedText style={styles.emptyText}>No flights added yet.</ThemedText>
+              )}
+            </ThemedView>
+
+            <ThemedView style={[styles.housingCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <Pressable style={styles.housingHeaderRow} onPress={() => toggleSection(setOverviewHousingCollapsed)}>
+                <View style={styles.sectionHeaderLeft}>
+                  <IconSymbol
+                    name="chevron.right"
+                    size={18}
+                    color={colors.primary}
+                    style={[styles.sectionChevron, !overviewHousingCollapsed ? styles.sectionChevronExpanded : null]}
+                  />
+                  <ThemedText style={styles.housingTitle}>Housing</ThemedText>
+                </View>
+                <View
+                  style={[
+                    styles.sectionHeaderActionSlot,
+                    overviewHousingCollapsed ? styles.sectionHeaderActionHidden : null,
+                  ]}
+                  pointerEvents={overviewHousingCollapsed ? 'none' : 'auto'}>
+                  <Pressable
+                    style={styles.flightAddIconButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      openHousingModal();
+                    }}>
+                    <IconSymbol name="plus" size={18} color={colors.primary} />
+                  </Pressable>
+                </View>
+              </Pressable>
+
+              {overviewHousingCollapsed ? null : tripHousing.length > 0 ? (
+                <View style={styles.housingList}>
+                  {tripHousing.map((h) => (
+                    <View
+                      key={h.id}
+                      style={[styles.housingItem, { borderColor: colors.border, backgroundColor: colors.surfaceMuted }]}>
+                      <ThemedText style={styles.housingItemTitle}>{h.location}</ThemedText>
+                      <ThemedText style={styles.housingItemSubtitle}>
+                        {formatHousingDate(h.startDate)} – {formatHousingDate(h.endDate)}
+                      </ThemedText>
+                      {h.checkInTime || h.checkOutTime ? (
+                        <ThemedText style={styles.housingItemSubtitle}>
+                          {h.checkInTime ? `Check-in: ${h.checkInTime}` : ''}
+                          {h.checkInTime && h.checkOutTime ? '  •  ' : ''}
+                          {h.checkOutTime ? `Check-out: ${h.checkOutTime}` : ''}
+                        </ThemedText>
+                      ) : null}
+                      {editMode ? (
+                        <Pressable
+                          onPress={() => {
+                            if (!tripId) return;
+                            Alert.alert('Remove housing?', 'This cannot be undone.', [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Remove', style: 'destructive', onPress: () => deleteHousing(tripId, h.id) },
+                            ]);
+                          }}>
+                          <ThemedText style={[styles.housingDeleteText, { color: colors.destructive }]}>Remove</ThemedText>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <ThemedText style={styles.emptyText}>No housing added yet.</ThemedText>
+              )}
+
+              <Modal visible={housingModalVisible} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                  <View style={[styles.modalCard, styles.flightModalCard, { backgroundColor: colors.surface }]}>
+                    <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent}>
+                      <ThemedText style={styles.modalTitle}>Add Housing</ThemedText>
+
+                      <TextInput
+                        value={housingLocation}
+                        onChangeText={setHousingLocation}
+                        placeholder="Location (e.g. Hotel Sunrise, Airbnb downtown)"
+                        placeholderTextColor="#888"
+                        style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
+                      />
+
+                      <ThemedText style={styles.housingCalLabel}>Select dates</ThemedText>
+
+                      <View style={[styles.housingCalContainer, { borderColor: colors.border }]}>
+                        <View style={styles.housingCalNav}>
+                          <Pressable
+                            onPress={() =>
+                              setHousingCalMonth((prev) => {
+                                const d = new Date(prev.year, prev.month - 1, 1);
+                                return { year: d.getFullYear(), month: d.getMonth() };
+                              })
+                            }>
+                            <ThemedText style={[styles.housingCalNavBtn, { color: colors.primary }]}>‹</ThemedText>
+                          </Pressable>
+                          <ThemedText style={styles.housingCalMonthLabel}>
+                            {new Date(housingCalMonth.year, housingCalMonth.month).toLocaleDateString(undefined, {
+                              month: 'long',
+                              year: 'numeric',
+                            })}
+                          </ThemedText>
+                          <Pressable
+                            onPress={() =>
+                              setHousingCalMonth((prev) => {
+                                const d = new Date(prev.year, prev.month + 1, 1);
+                                return { year: d.getFullYear(), month: d.getMonth() };
+                              })
+                            }>
+                            <ThemedText style={[styles.housingCalNavBtn, { color: colors.primary }]}>›</ThemedText>
+                          </Pressable>
+                        </View>
+
+                        <View style={styles.housingCalDowRow}>
+                          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+                            <ThemedText key={d} style={styles.housingCalDowCell}>
+                              {d}
+                            </ThemedText>
+                          ))}
+                        </View>
+
+                        <View style={styles.housingCalGrid}>
+                          {buildCalendarDays(housingCalMonth.year, housingCalMonth.month).map((cell, idx) => {
+                            if (!cell) {
+                              return <View key={`empty-${idx}`} style={styles.housingCalCell} />;
+                            }
+                            const dayNum = Number(cell.split('-')[2]);
+                            const inRange = isDateInRange(cell);
+                            const isStart = cell === housingStartDate;
+                            const isEnd = cell === housingEndDate;
+                            return (
+                              <Pressable
+                                key={cell}
+                                style={[
+                                  styles.housingCalCell,
+                                  inRange ? { backgroundColor: colors.primary + '22' } : null,
+                                  isStart || isEnd
+                                    ? { backgroundColor: colors.primary, borderRadius: 8 }
+                                    : null,
+                                ]}
+                                onPress={() => handleHousingCalDayPress(cell)}>
+                                <ThemedText
+                                  style={[
+                                    styles.housingCalDayText,
+                                    isStart || isEnd ? { color: '#fff', fontWeight: '800' } : null,
+                                  ]}>
+                                  {dayNum}
+                                </ThemedText>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </View>
+
+                      {housingStartDate ? (
+                        <ThemedText style={styles.housingDateSummary}>
+                          {formatHousingDate(housingStartDate)}
+                          {housingEndDate ? ` – ${formatHousingDate(housingEndDate)}` : ' (tap end date)'}
+                        </ThemedText>
+                      ) : null}
+
+                      <ThemedText style={styles.housingCalLabel}>Optional times</ThemedText>
+
+                      <View style={styles.housingTimeRow}>
+                        <View style={styles.housingTimeField}>
+                          <ThemedText style={styles.housingTimeLabel}>Check-in</ThemedText>
+                          <TextInput
+                            value={housingCheckIn}
+                            onChangeText={setHousingCheckIn}
+                            placeholder="e.g. 3:00 PM"
+                            placeholderTextColor="#888"
+                            style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
+                          />
+                        </View>
+                        <View style={styles.housingTimeField}>
+                          <ThemedText style={styles.housingTimeLabel}>Check-out</ThemedText>
+                          <TextInput
+                            value={housingCheckOut}
+                            onChangeText={setHousingCheckOut}
+                            placeholder="e.g. 11:00 AM"
+                            placeholderTextColor="#888"
+                            style={[styles.modalInput, { borderColor: colors.border, color: colors.inputText }]}
+                          />
+                        </View>
+                      </View>
+
+                      {housingError ? <ThemedText style={styles.modalErrorText}>{housingError}</ThemedText> : null}
+
+                      <View style={styles.modalActions}>
+                        <Pressable
+                          style={[styles.modalButton, { borderColor: colors.border }]}
+                          onPress={() => {
+                            setHousingModalVisible(false);
+                            setHousingError(null);
+                          }}>
+                          <ThemedText style={styles.modalButtonText}>Cancel</ThemedText>
+                        </Pressable>
+
+                        <Pressable
+                          style={[
+                            styles.modalButton,
+                            styles.modalPrimaryButton,
+                            { backgroundColor: colors.primary, borderColor: colors.primary },
+                          ]}
+                          onPress={() => {
+                            if (!tripId) return;
+                            const loc = housingLocation.trim();
+                            if (!loc) {
+                              setHousingError('Please enter a location.');
+                              return;
+                            }
+                            if (!housingStartDate || !housingEndDate) {
+                              setHousingError('Please select a start and end date.');
+                              return;
+                            }
+                            addHousing(tripId, {
+                              location: loc,
+                              startDate: housingStartDate,
+                              endDate: housingEndDate,
+                              checkInTime: housingCheckIn.trim() || undefined,
+                              checkOutTime: housingCheckOut.trim() || undefined,
+                            });
+                            setHousingModalVisible(false);
+                            setHousingError(null);
+                          }}>
+                          <ThemedText style={[styles.modalButtonText, styles.modalPrimaryButtonText]}>Save</ThemedText>
+                        </Pressable>
+                      </View>
+                    </ScrollView>
+                  </View>
+                </View>
+              </Modal>
+            </ThemedView>
+
+            <ThemedView style={[styles.comingUpCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <Pressable style={styles.comingUpHeaderRow} onPress={() => toggleSection(setOverviewComingUpCollapsed)}>
+                <View style={styles.sectionHeaderLeft}>
+                  <IconSymbol
+                    name="chevron.right"
+                    size={18}
+                    color={colors.primary}
+                    style={[styles.sectionChevron, !overviewComingUpCollapsed ? styles.sectionChevronExpanded : null]}
+                  />
+                  <ThemedText style={styles.comingUpTitle}>Coming Up</ThemedText>
+                </View>
+                <View style={styles.sectionHeaderActionSlot} />
+              </Pressable>
+
+              {overviewComingUpCollapsed ? null : (
+                <View style={styles.comingUpBody}>
+                  <View style={styles.comingUpRow}>
+                    <ThemedText style={styles.comingUpLabel}>Next event</ThemedText>
+                    <ThemedText style={styles.comingUpValue}>
+                      {nextEvent
+                        ? `${nextEvent.event.name}${nextEvent.event.time ? ` • ${nextEvent.event.time}` : ''}`
+                        : 'No itinerary events yet.'}
+                    </ThemedText>
+                    {nextEvent?.dayLabel || nextEvent?.event.location ? (
+                      <ThemedText style={styles.comingUpSubvalue}>
+                        {nextEvent?.dayLabel ?? ''}
+                        {nextEvent?.dayLabel && nextEvent?.event.location ? ' • ' : ''}
+                        {nextEvent?.event.location ?? ''}
+                      </ThemedText>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.comingUpDivider} />
+
+                  <View style={styles.comingUpRow}>
+                    <ThemedText style={styles.comingUpLabel}>Next major transport</ThemedText>
+                    <ThemedText style={styles.comingUpValue}>
+                      {nextMajorTransport
+                        ? `${nextMajorTransport.from ?? '—'} → ${nextMajorTransport.to ?? '—'} • ${formatFlightDayLine({
+                            departureDate: nextMajorTransport.departureDate,
+                            departureTime: nextMajorTransport.departureTime,
+                            arrivalTime: nextMajorTransport.arrivalTime,
+                          })}`
+                        : 'No flights added yet.'}
+                    </ThemedText>
+                    {nextMajorTransport?.airline || nextMajorTransport?.flightNumber ? (
+                      <ThemedText style={styles.comingUpSubvalue}>
+                        {nextMajorTransport.airline ?? ''}
+                        {nextMajorTransport.airline && nextMajorTransport.flightNumber ? ' • ' : ''}
+                        {nextMajorTransport.flightNumber ?? ''}
+                      </ThemedText>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.comingUpDivider} />
+
+                  <View style={styles.comingUpRow}>
+                    <ThemedText style={styles.comingUpLabel}>Next housing</ThemedText>
+                    <ThemedText style={styles.comingUpValue}>
+                      {upcomingHousing ? upcomingHousing.location : 'No housing added yet.'}
+                    </ThemedText>
+                    {upcomingHousing ? (
+                      <ThemedText style={styles.comingUpSubvalue}>
+                        {formatHousingDate(upcomingHousing.startDate)} – {formatHousingDate(upcomingHousing.endDate)}
+                      </ThemedText>
+                    ) : null}
+                  </View>
+                </View>
               )}
             </ThemedView>
 
@@ -1773,160 +2230,173 @@ export default function TripDetailsScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <Animated.View style={[styles.heroContainer, { height: heroHeight }]}>
-        {heroDisplayedUrl ? (
-          <ExpoImage
-            source={{ uri: heroDisplayedUrl }}
-            style={styles.heroImage}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={0}
-            priority="high"
-          />
-        ) : (
-          <View style={styles.heroImageFallback} />
-        )}
+      <ScrollView
+        style={{ flex: 1 }}
+        scrollEventThrottle={1}
+        bounces
+        alwaysBounceVertical
+        overScrollMode="always"
+        stickyHeaderIndices={[1]}
+        contentContainerStyle={styles.scrollContentContainer}>
 
-        {heroNextUrl ? (
-          <Animated.View style={[styles.heroNextLayer, { opacity: heroNextOpacity }]}>
+        {/* Child 0: Hero (scrolls away naturally — native 120fps) */}
+        <View style={[styles.heroContainer, { height: heroMaxHeight }]}>
+          {heroDisplayedUrl ? (
             <ExpoImage
-              source={{ uri: heroNextUrl }}
+              source={{ uri: heroDisplayedUrl }}
               style={styles.heroImage}
               contentFit="cover"
               cachePolicy="memory-disk"
               transition={0}
               priority="high"
-              onLoadEnd={() => {
-                heroNextOpacity.setValue(1);
-                heroDisplayedUrlRef.current = heroNextUrl;
-                setHeroDisplayedUrl(heroNextUrl);
-                setHeroNextUrl(null);
-                heroNextOpacity.setValue(0);
-              }}
             />
-          </Animated.View>
-        ) : null}
-        <View style={styles.heroOverlay} />
-        <View style={styles.heroContent}>
-          <ThemedText style={styles.tripDestination}>Trip Details</ThemedText>
-          <ThemedText style={styles.tripLocationText}>{trip?.destination ?? ''}</ThemedText>
-          <ThemedText style={styles.tripDates}>
-            {trip?.startDate && trip?.endDate
-              ? `Departure: ${formatParamDate(trip.startDate)} | Arrival: ${formatParamDate(trip.endDate)}`
-              : ''}
-          </ThemedText>
+          ) : (
+            <View style={styles.heroImageFallback} />
+          )}
+
+          {heroNextUrl ? (
+            <Animated.View style={[styles.heroNextLayer, { opacity: heroNextOpacity }]}>
+              <ExpoImage
+                source={{ uri: heroNextUrl }}
+                style={styles.heroImage}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={0}
+                priority="high"
+                onLoadEnd={() => {
+                  heroNextOpacity.setValue(1);
+                  heroDisplayedUrlRef.current = heroNextUrl;
+                  setHeroDisplayedUrl(heroNextUrl);
+                  setHeroNextUrl(null);
+                  heroNextOpacity.setValue(0);
+                  heroSwapInProgressRef.current = false;
+                }}
+                onError={() => {
+                  setHeroNextUrl(null);
+                  heroNextOpacity.setValue(0);
+                  heroSwapInProgressRef.current = false;
+                }}
+              />
+            </Animated.View>
+          ) : null}
+          <View style={styles.heroOverlay} />
+          <View style={styles.heroContent}>
+            <View style={[styles.heroDetailsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <ThemedText style={[styles.tripDestination, { color: colors.text }]}>{trip?.destination ?? ''}</ThemedText>
+              <ThemedText style={[styles.tripLocationText, { color: colors.icon }]}>
+                {trip?.startDate && trip?.endDate
+                  ? `${formatParamDate(trip.startDate)} – ${formatParamDate(trip.endDate)}`
+                  : ''}
+              </ThemedText>
+
+              <View style={styles.heroAvatarsRow}>
+                {tripPeople.slice(0, 6).map((p) => (
+                  <View
+                    key={p.id}
+                    style={[styles.personAvatar, { borderColor: colors.border, backgroundColor: colors.surfaceMuted }]}>
+                    <ThemedText style={styles.personAvatarText}>{getInitials(p.name)}</ThemedText>
+                  </View>
+                ))}
+
+                <Pressable
+                  style={[styles.personAvatar, { borderColor: colors.border, backgroundColor: colors.surfaceMuted }]}
+                  onPress={openInviteModal}>
+                  <IconSymbol name="plus" size={18} color={colors.primary} />
+                </Pressable>
+              </View>
+            </View>
+          </View>
         </View>
-      </Animated.View>
 
-      {/* Tabs */}
-      <ThemedView style={[styles.tabsContainer, { backgroundColor: colors.surfaceMuted }]}>
-        {tabs.map((tab) => (
-          <Pressable
-            key={tab.key}
-            style={[styles.tab, activeTab === tab.key ? { backgroundColor: colors.primary } : undefined]}
-            onPress={() => setActiveTab(tab.key)}>
-            <ThemedText
-              numberOfLines={1}
-              style={[styles.tabText, activeTab === tab.key && styles.activeTabText]}>
-              {tab.label}
-            </ThemedText>
-          </Pressable>
-        ))}
-      </ThemedView>
+        {/* Child 1: Sticky header — Tabs + edit overlay */}
+        <View style={[styles.stickyHeaderWrapper, { backgroundColor: colors.background }]}>
+          <ThemedView style={[styles.tabsContainer, { backgroundColor: colors.surfaceMuted }]}>
+            {tabs.map((tab) => (
+              <Pressable
+                key={tab.key}
+                style={[styles.tab, activeTab === tab.key ? { backgroundColor: colors.primary } : undefined]}
+                onPress={() => setActiveTab(tab.key)}>
+                <ThemedText
+                  numberOfLines={1}
+                  style={[styles.tabText, activeTab === tab.key && styles.activeTabText]}>
+                  {tab.label}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </ThemedView>
 
-      <View style={styles.globalEditOverlay} pointerEvents="box-none">
-        {activeTab === 'overview' ? null : (
-          <Pressable
-            style={[
-              styles.globalPlusButton,
-              styles.globalPlusButtonPill,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-            ]}
-            onPress={() => {
-              if (!tripId) return;
-              if (activeTab === 'itinerary') {
-                if (selectedDayId) {
-                  setEventName('');
-                  setEventTime('');
-                  setEventLocation('');
-                  setEventError(null);
-                  setEditingEventId(null);
-                  setEventModalVisible(true);
-                } else {
-                  setSelectedDayId(null);
-                  setEditingDayId(null);
-                  setDayName(`Day ${itineraryDays.length + 1}`);
-                  setDayModalVisible(true);
-                }
-                return;
-              }
+          <View style={styles.globalEditOverlay} pointerEvents="box-none">
+            {activeTab === 'overview' ? null : (
+              <Pressable
+                style={[
+                  styles.globalPlusButton,
+                  styles.globalPlusButtonPill,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
+                ]}
+                onPress={() => {
+                  if (!tripId) return;
+                  if (activeTab === 'itinerary') {
+                    if (selectedDayId) {
+                      setEventName('');
+                      setEventTime('');
+                      setEventLocation('');
+                      setEventError(null);
+                      setEditingEventId(null);
+                      setEventModalVisible(true);
+                    } else {
+                      setSelectedDayId(null);
+                      setEditingDayId(null);
+                      setDayName(`Day ${itineraryDays.length + 1}`);
+                      setDayModalVisible(true);
+                    }
+                    return;
+                  }
 
-              if (activeTab === 'finances') {
-                openExpenseModal();
-                return;
-              }
+                  if (activeTab === 'finances') {
+                    openExpenseModal();
+                    return;
+                  }
 
-              if (activeTab === 'journal') {
-                openJournalModal();
-                return;
-              }
+                  if (activeTab === 'journal') {
+                    openJournalModal();
+                    return;
+                  }
 
-              if (activeTab === 'photos') {
-                Alert.alert('Select photos', 'Photo picking will be added soon.', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'OK' },
-                ]);
-              }
-            }}>
-            <IconSymbol name="plus" size={22} color={colors.primary} />
-            {activeTab === 'itinerary' ? (
-              <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
-                {selectedDayId ? 'Add Event' : 'Add Day'}
-              </ThemedText>
-            ) : activeTab === 'finances' ? (
-              <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
-                Add Expense
-              </ThemedText>
-            ) : activeTab === 'journal' ? (
-              <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
-                Add Entry
-              </ThemedText>
-            ) : activeTab === 'photos' ? (
-              <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
-                Add Photos
-              </ThemedText>
-            ) : null}
-          </Pressable>
-        )}
-      </View>
+                  if (activeTab === 'photos') {
+                    Alert.alert('Select photos', 'Photo picking will be added soon.', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'OK' },
+                    ]);
+                  }
+                }}>
+                <IconSymbol name="plus" size={22} color={colors.primary} />
+                {activeTab === 'itinerary' ? (
+                  <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
+                    {selectedDayId ? 'Add Event' : 'Add Day'}
+                  </ThemedText>
+                ) : activeTab === 'finances' ? (
+                  <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
+                    Add Expense
+                  </ThemedText>
+                ) : activeTab === 'journal' ? (
+                  <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
+                    Add Entry
+                  </ThemedText>
+                ) : activeTab === 'photos' ? (
+                  <ThemedText numberOfLines={1} style={[styles.globalPlusLabel, { color: colors.primary }]}>
+                    Add Photos
+                  </ThemedText>
+                ) : null}
+              </Pressable>
+            )}
+          </View>
+        </View>
 
-      {/* Tab content */}
-      <Animated.ScrollView
-        ref={(node) => {
-          scrollRef.current = (node as unknown as ScrollView) ?? null;
-        }}
-        style={styles.content}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
-        scrollEventThrottle={16}
-        bounces
-        alwaysBounceVertical
-        overScrollMode="always"
-        onLayout={(e) => {
-          scrollLayoutHeightRef.current = e.nativeEvent.layout.height;
-        }}
-        onContentSizeChange={(_, h) => {
-          scrollContentHeightRef.current = h;
-        }}
-        onScrollEndDrag={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-          snapBackIfNeeded(e.nativeEvent.contentOffset.y);
-        }}
-        onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-          snapBackIfNeeded(e.nativeEvent.contentOffset.y);
-        }}
-        contentContainerStyle={styles.scrollContentContainer}>
-        {renderTabContent()}
-        <View style={{ height: bottomElasticSpace }} />
-      </Animated.ScrollView>
+        {/* Child 2: Tab content */}
+        <View style={styles.content}>
+          {renderTabContent()}
+        </View>
+      </ScrollView>
 
       <View
         pointerEvents="box-none"
@@ -1963,6 +2433,9 @@ const styles = StyleSheet.create({
     width: '100%',
     overflow: 'hidden',
   },
+  heroImageScaleLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
   heroImageFallback: {
     ...StyleSheet.absoluteFillObject,
     width: '100%',
@@ -1986,10 +2459,16 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 24,
-    paddingBottom: 16,
-    paddingTop: 60,
-    gap: 4,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    paddingTop: 90,
+  },
+  heroDetailsCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 6,
   },
   header: {
     paddingTop: 60,
@@ -1998,19 +2477,20 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   tripDestination: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
   },
   tripLocationText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   tripDates: {
     fontSize: 16,
     opacity: 0.7,
     color: '#fff',
+  },
+  stickyHeaderWrapper: {
+    paddingBottom: 4,
   },
   tabsContainer: {
     marginTop: 5,
@@ -2024,14 +2504,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   globalEditOverlay: {
-    height: 1,
+    height: 8,
     marginHorizontal: 24,
+    marginBottom: -10,
     overflow: 'visible',
   },
   globalPlusButton: {
     position: 'absolute',
-    right: 46,
-    top: -8,
+    right: 0,
+    top: -2,
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -2093,7 +2574,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   content: {
-    flex: 1,
     paddingHorizontal: 24,
   },
   scrollContentContainer: {
@@ -2132,6 +2612,225 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  peopleCard: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    padding: 14,
+    gap: 10,
+    backgroundColor: '#fff',
+  },
+  peopleHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+    paddingVertical: 2,
+  },
+  sectionHeaderActionSlot: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionHeaderActionHidden: {
+    opacity: 0,
+  },
+  sectionChevron: {
+    width: 18,
+  },
+  sectionChevronExpanded: {
+    transform: [{ rotate: '90deg' }],
+  },
+  peopleTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  peopleAvatarsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  heroAvatarsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 4,
+  },
+  personAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  personAvatarText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  housingCard: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    padding: 14,
+    gap: 10,
+    backgroundColor: '#fff',
+  },
+  housingHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  housingTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  housingList: {
+    gap: 10,
+  },
+  housingItem: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  housingItemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  housingItemSubtitle: {
+    fontSize: 13,
+    opacity: 0.75,
+    fontWeight: '600',
+  },
+  housingDeleteText: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  housingCalLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    opacity: 0.8,
+  },
+  housingCalContainer: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    gap: 6,
+  },
+  housingCalNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  housingCalNavBtn: {
+    fontSize: 24,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+  },
+  housingCalMonthLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  housingCalDowRow: {
+    flexDirection: 'row',
+  },
+  housingCalDowCell: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '700',
+    opacity: 0.5,
+    paddingVertical: 4,
+  },
+  housingCalGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  housingCalCell: {
+    width: '14.28%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  housingCalDayText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  housingDateSummary: {
+    fontSize: 13,
+    fontWeight: '700',
+    opacity: 0.8,
+    textAlign: 'center',
+  },
+  housingTimeRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  housingTimeField: {
+    flex: 1,
+    gap: 4,
+  },
+  housingTimeLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    opacity: 0.7,
+  },
+  comingUpCard: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    padding: 14,
+    gap: 10,
+    backgroundColor: '#fff',
+  },
+  comingUpHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  comingUpTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  comingUpBody: {
+    gap: 10,
+  },
+  comingUpRow: {
+    gap: 4,
+  },
+  comingUpLabel: {
+    fontSize: 12,
+    opacity: 0.7,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  comingUpValue: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  comingUpSubvalue: {
+    fontSize: 13,
+    opacity: 0.75,
+    fontWeight: '600',
+  },
+  comingUpDivider: {
+    height: 1,
+    opacity: 0.4,
+    backgroundColor: '#ddd',
   },
   flightTitle: {
     fontSize: 16,

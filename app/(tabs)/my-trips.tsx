@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -11,16 +11,45 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function MyTripsScreen() {
   const router = useRouter();
-  const { trips } = useTrips();
+  const { trips, deleteTrip } = useTrips();
   const { signOut } = useAuth();
   const theme = useColorScheme() ?? 'light';
   const colors = Colors[theme];
 
-  const formatParamDate = (value?: string) => {
-    if (!value) return '';
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString();
+  const [editMode, setEditMode] = useState(false);
+
+  const parseLocalDate = (value?: string) => {
+    if (!value) return undefined;
+    const iso = value.trim();
+    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const year = Number(m[1]);
+      const month = Number(m[2]);
+      const day = Number(m[3]);
+      const d = new Date(year, month - 1, day);
+      return Number.isNaN(d.getTime()) ? undefined : d;
+    }
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  };
+
+  const formatTripMonthRange = (start?: string, end?: string) => {
+    const startDate = parseLocalDate(start);
+    const endDate = parseLocalDate(end);
+    if (!startDate || !endDate) return '';
+
+    const monthFmt = new Intl.DateTimeFormat(undefined, { month: 'short' });
+    const startMonth = monthFmt.format(startDate);
+    const endMonth = monthFmt.format(endDate);
+
+    const startYear = startDate.getFullYear();
+    const endYear = endDate.getFullYear();
+    const sameYear = startYear === endYear;
+    const sameMonth = sameYear && startDate.getMonth() === endDate.getMonth();
+
+    if (sameMonth) return `${startMonth} ${startYear}`;
+    if (sameYear) return `${startMonth} - ${endMonth} ${startYear}`;
+    return `${startMonth} ${startYear} - ${endMonth} ${endYear}`;
   };
 
   const handleTripPress = (trip: Trip) => {
@@ -35,33 +64,134 @@ export default function MyTripsScreen() {
     });
   };
 
+  const { upcomingTrips, pastTrips } = useMemo(() => {
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    const upcoming: Trip[] = [];
+    const past: Trip[] = [];
+
+    for (const trip of trips) {
+      const end = parseLocalDate(trip.endDate);
+      if (end && end.getTime() < todayStart.getTime()) {
+        past.push(trip);
+      } else {
+        upcoming.push(trip);
+      }
+    }
+
+    upcoming.sort((a, b) => {
+      const aStart = parseLocalDate(a.startDate)?.getTime() ?? 0;
+      const bStart = parseLocalDate(b.startDate)?.getTime() ?? 0;
+      return aStart - bStart;
+    });
+
+    past.sort((a, b) => {
+      const aEnd = parseLocalDate(a.endDate)?.getTime() ?? 0;
+      const bEnd = parseLocalDate(b.endDate)?.getTime() ?? 0;
+      return bEnd - aEnd;
+    });
+
+    return { upcomingTrips: upcoming, pastTrips: past };
+  }, [trips]);
+
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.header}>
         <View style={styles.headerRow}>
           <ThemedText type="title">My Trips</ThemedText>
-          <Pressable
-            onPress={async () => {
-              await signOut();
-              router.replace('/auth');
-            }}>
-            <ThemedText style={[styles.signOutText, { color: colors.primary }]}>Sign out</ThemedText>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => {
+                setEditMode((v) => !v);
+              }}>
+              <ThemedText style={[styles.signOutText, { color: colors.primary }]}>{editMode ? 'Done' : 'Edit'}</ThemedText>
+            </Pressable>
+            <Pressable
+              onPress={async () => {
+                await signOut();
+                router.replace('/auth');
+              }}>
+              <ThemedText style={[styles.signOutText, { color: colors.primary }]}>Sign out</ThemedText>
+            </Pressable>
+          </View>
         </View>
       </ThemedView>
 
-      {trips.length > 0 ? (
-        trips.map((trip) => (
-          <Pressable key={trip.id} style={styles.tripCard} onPress={() => handleTripPress(trip)}>
-            <ThemedText style={styles.tripDestination}>{trip.destination}</ThemedText>
-            <ThemedText style={styles.tripDates}>
-              {formatParamDate(trip.startDate)} - {formatParamDate(trip.endDate)}
-            </ThemedText>
+      {upcomingTrips.length > 0 ? (
+        upcomingTrips.map((trip) => (
+          <Pressable
+            key={trip.id}
+            style={[styles.tripCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            onPress={() => {
+              if (editMode) return;
+              handleTripPress(trip);
+            }}>
+            <View style={styles.tripCardTopRow}>
+              <ThemedText style={styles.tripDestination}>{trip.destination}</ThemedText>
+              {editMode ? (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    Alert.alert('Delete trip?', 'This cannot be undone.', [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: () => {
+                          deleteTrip(trip.id);
+                        },
+                      },
+                    ]);
+                  }}>
+                  <ThemedText style={[styles.deleteText, { color: colors.destructive }]}>Delete</ThemedText>
+                </Pressable>
+              ) : null}
+            </View>
+            <ThemedText style={styles.tripDates}>{formatTripMonthRange(trip.startDate, trip.endDate)}</ThemedText>
           </Pressable>
         ))
-      ) : (
+      ) : trips.length === 0 ? (
         <ThemedText style={styles.placeholder}>Your saved trips will appear here.</ThemedText>
-      )}
+      ) : null}
+
+      {pastTrips.length > 0 ? (
+        <>
+          <ThemedText style={styles.sectionHeader}>Past Trips</ThemedText>
+          {pastTrips.map((trip) => (
+            <Pressable
+              key={trip.id}
+              style={[styles.tripCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+              onPress={() => {
+                if (editMode) return;
+                handleTripPress(trip);
+              }}>
+              <View style={styles.tripCardTopRow}>
+                <ThemedText style={styles.tripDestination}>{trip.destination}</ThemedText>
+                {editMode ? (
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      Alert.alert('Delete trip?', 'This cannot be undone.', [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () => {
+                            deleteTrip(trip.id);
+                          },
+                        },
+                      ]);
+                    }}>
+                    <ThemedText style={[styles.deleteText, { color: colors.destructive }]}>Delete</ThemedText>
+                  </Pressable>
+                ) : null}
+              </View>
+              <ThemedText style={styles.tripDates}>{formatTripMonthRange(trip.startDate, trip.endDate)}</ThemedText>
+            </Pressable>
+          ))}
+        </>
+      ) : null}
     </ThemedView>
   );
 }
@@ -80,6 +210,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   signOutText: {
     color: '#007AFF',
     fontWeight: '600',
@@ -91,6 +226,12 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 4,
   },
+  tripCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   tripDestination: {
     fontSize: 18,
     fontWeight: '600',
@@ -98,6 +239,18 @@ const styles = StyleSheet.create({
   tripDates: {
     fontSize: 14,
     opacity: 0.7,
+  },
+  deleteText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  sectionHeader: {
+    marginTop: 12,
+    fontSize: 14,
+    fontWeight: '800',
+    opacity: 0.7,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
   placeholder: {
     opacity: 0.5,

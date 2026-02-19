@@ -45,6 +45,15 @@ export interface TripExpense {
   createdAt: string;
 }
 
+export interface TripHousing {
+  id: string;
+  location: string;
+  startDate: string;
+  endDate: string;
+  checkInTime?: string;
+  checkOutTime?: string;
+}
+
 export interface JournalEntry {
   id: string;
   date: string;
@@ -54,6 +63,7 @@ export interface JournalEntry {
 interface TripsContextValue {
   trips: Trip[];
   addTrip: (trip: Omit<Trip, 'id'>) => Trip;
+  deleteTrip: (tripId: string) => void;
   flightsByTripId: Record<string, FlightInfo[]>;
   addFlight: (tripId: string, flight: Omit<FlightInfo, 'id'>) => FlightInfo;
   updateFlight: (tripId: string, flightId: string, flight: Omit<FlightInfo, 'id'>) => void;
@@ -88,6 +98,13 @@ interface TripsContextValue {
   addJournalEntry: (tripId: string, entry: { date: string; text: string }) => JournalEntry;
   updateJournalEntry: (tripId: string, entryId: string, updates: { text: string }) => void;
   deleteJournalEntry: (tripId: string, entryId: string) => void;
+
+  housingByTripId: Record<string, TripHousing[]>;
+  addHousing: (
+    tripId: string,
+    housing: Omit<TripHousing, 'id'>
+  ) => TripHousing;
+  deleteHousing: (tripId: string, housingId: string) => void;
 }
 
 const TripsContext = createContext<TripsContextValue | undefined>(undefined);
@@ -101,6 +118,7 @@ type PersistedTripsState = {
   itineraryByTripId: Record<string, ItineraryDay[]>;
   expensesByTripId: Record<string, TripExpense[]>;
   journalByTripId: Record<string, JournalEntry[]>;
+  housingByTripId?: Record<string, TripHousing[]>;
 };
 
 type TripsProviderProps = {
@@ -114,6 +132,7 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
   const [itineraryByTripId, setItineraryByTripId] = useState<Record<string, ItineraryDay[]>>({});
   const [expensesByTripId, setExpensesByTripId] = useState<Record<string, TripExpense[]>>({});
   const [journalByTripId, setJournalByTripId] = useState<Record<string, JournalEntry[]>>({});
+  const [housingByTripId, setHousingByTripId] = useState<Record<string, TripHousing[]>>({});
   const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
@@ -126,6 +145,7 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
         setItineraryByTripId({});
         setExpensesByTripId({});
         setJournalByTripId({});
+        setHousingByTripId({});
         setIsHydrated(true);
         return;
       }
@@ -141,6 +161,7 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
           setItineraryByTripId({});
           setExpensesByTripId({});
           setJournalByTripId({});
+          setHousingByTripId({});
           return;
         }
 
@@ -182,6 +203,9 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
           parsed.expensesByTripId && typeof parsed.expensesByTripId === 'object' ? parsed.expensesByTripId : {}
         );
         setJournalByTripId(parsed.journalByTripId && typeof parsed.journalByTripId === 'object' ? parsed.journalByTripId : {});
+        setHousingByTripId(
+          parsed.housingByTripId && typeof parsed.housingByTripId === 'object' ? parsed.housingByTripId : {}
+        );
       } catch {
         if (cancelled) return;
         setTrips([]);
@@ -189,6 +213,7 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
         setItineraryByTripId({});
         setExpensesByTripId({});
         setJournalByTripId({});
+        setHousingByTripId({});
       } finally {
         if (!cancelled) setIsHydrated(true);
       }
@@ -212,12 +237,13 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
         itineraryByTripId,
         expensesByTripId,
         journalByTripId,
+        housingByTripId,
       };
       await AsyncStorage.setItem(getTripsStorageKey(userKey), JSON.stringify(nextState));
     };
 
     persist();
-  }, [expensesByTripId, flightsByTripId, itineraryByTripId, isHydrated, journalByTripId, trips, userKey]);
+  }, [expensesByTripId, flightsByTripId, housingByTripId, itineraryByTripId, isHydrated, journalByTripId, trips, userKey]);
 
   const value = useMemo<TripsContextValue>(() => {
     const addTrip: TripsContextValue['addTrip'] = (trip) => {
@@ -230,6 +256,40 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
       });
 
       return newTrip;
+    };
+
+    const deleteTrip: TripsContextValue['deleteTrip'] = (tripId) => {
+      setTrips((prev) => prev.filter((t) => t.id !== tripId));
+
+      setFlightsByTripId((prev) => {
+        if (!prev[tripId]) return prev;
+        const { [tripId]: _removed, ...rest } = prev;
+        return rest;
+      });
+
+      setItineraryByTripId((prev) => {
+        if (!prev[tripId]) return prev;
+        const { [tripId]: _removed, ...rest } = prev;
+        return rest;
+      });
+
+      setExpensesByTripId((prev) => {
+        if (!prev[tripId]) return prev;
+        const { [tripId]: _removed, ...rest } = prev;
+        return rest;
+      });
+
+      setJournalByTripId((prev) => {
+        if (!prev[tripId]) return prev;
+        const { [tripId]: _removed, ...rest } = prev;
+        return rest;
+      });
+
+      setHousingByTripId((prev) => {
+        if (!prev[tripId]) return prev;
+        const { [tripId]: _removed, ...rest } = prev;
+        return rest;
+      });
     };
 
     const normalizeFlight = (flight: Omit<FlightInfo, 'id'>): Omit<FlightInfo, 'id'> => ({
@@ -459,9 +519,35 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
       });
     };
 
+    const addHousing: TripsContextValue['addHousing'] = (tripId, housing) => {
+      const created: TripHousing = {
+        id: `housing-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        location: housing.location.trim(),
+        startDate: housing.startDate,
+        endDate: housing.endDate,
+        checkInTime: housing.checkInTime?.trim() || undefined,
+        checkOutTime: housing.checkOutTime?.trim() || undefined,
+      };
+
+      setHousingByTripId((prev) => {
+        const current = prev[tripId] ?? [];
+        return { ...prev, [tripId]: [...current, created] };
+      });
+
+      return created;
+    };
+
+    const deleteHousing: TripsContextValue['deleteHousing'] = (tripId, housingId) => {
+      setHousingByTripId((prev) => {
+        const current = prev[tripId] ?? [];
+        return { ...prev, [tripId]: current.filter((h) => h.id !== housingId) };
+      });
+    };
+
     return {
       trips,
       addTrip,
+      deleteTrip,
       flightsByTripId,
       addFlight,
       updateFlight,
@@ -482,8 +568,11 @@ export function TripsProvider({ children, userKey }: TripsProviderProps) {
       addJournalEntry,
       updateJournalEntry,
       deleteJournalEntry,
+      housingByTripId,
+      addHousing,
+      deleteHousing,
     };
-  }, [expensesByTripId, flightsByTripId, itineraryByTripId, journalByTripId, trips]);
+  }, [expensesByTripId, flightsByTripId, housingByTripId, itineraryByTripId, journalByTripId, trips]);
 
   return <TripsContext.Provider value={value}>{children}</TripsContext.Provider>;
 }

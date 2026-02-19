@@ -33,6 +33,14 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
+        name="activity"
+        options={{
+          title: 'Movements',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.2.fill" color={color} />,
+        }}
+      />
+
+      <Tabs.Screen
         name="explore"
         options={{
           href: null,
